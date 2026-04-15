@@ -1,0 +1,2 @@
+# esp32_ssd1306_oledx4_motion_AHT10TFT
+ESP32を使用して、4枚のOLEDディスプレイと1枚のTFTディスプレイを組み合わせた多機能な情報表示デバイス
