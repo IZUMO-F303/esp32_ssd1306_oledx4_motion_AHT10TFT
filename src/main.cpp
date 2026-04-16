@@ -308,6 +308,14 @@ void drawTemperatureChart(lgfx::LGFX_Device& gfx, float* data, int count, float 
         return;
     }
 
+    // 各区間の最高・最低気温を計算
+    float localMax = -100.0f;
+    float localMin = 100.0f;
+    for (int i = 0; i < count; i++) {
+        if (data[i] > localMax) localMax = data[i];
+        if (data[i] < localMin) localMin = data[i];
+    }
+
     int chart_x = 0;
     int chart_y = 20;
     int chart_w = 128;
@@ -326,12 +334,12 @@ void drawTemperatureChart(lgfx::LGFX_Device& gfx, float* data, int count, float 
         gfx.drawLine(x1, y1 + 1, x2, y2 + 1, TFT_WHITE);
     }
     
-    // 最小・最大気温の表示 (フォントをFont2に拡大し、位置を調整)
+    // 最小・最大気温の表示 (その区間の最高・最低を表示)
     gfx.setFont(&fonts::Font2);
     gfx.setCursor(0, 16);
-    gfx.printf("%.1f", maxT);
+    gfx.printf("%.1f", localMax);
     gfx.setCursor(0, 48);
-    gfx.printf("%.1f", minT);
+    gfx.printf("%.1f", localMin);
 }
 
 void drawAllCharts() {
