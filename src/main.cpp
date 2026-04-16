@@ -436,11 +436,11 @@ void displayHistory() {
     int h1 = 22; // 1行目の高さ目安
     int h2 = 22; // 2行目の高さ目安
     
-    sprintf(hist_temp_str, "Max:%.0f°C", past_max);
+    sprintf(hist_temp_str, "Max:%.1f°C", past_max);
     lgfx_right.setCursor(0, h1);
     lgfx_right.println(hist_temp_str);
     
-    sprintf(hist_temp_str, "Min:%.0f°C", past_min);
+    sprintf(hist_temp_str, "Min:%.1f°C", past_min);
     lgfx_right.setCursor(0, h1 + h2);
     lgfx_right.println(hist_temp_str);
 }
@@ -503,14 +503,13 @@ void updateWeather(bool saveHistory) {
             String tomorrow_weather_desc = doc["list"][8]["weather"][0]["description"].as<String>();
 
             // 今日の最高・最低気温（現時刻から24時間以内）の計算
-            float today_temp_max = -100.0f; // 初期値は非常に小さい値
-            float today_temp_min = 100.0f;  // 初期値は非常に大きい値
+            float today_temp_max = -100.0f;
+            float today_temp_min = 100.0f;
             for (int i = 0; i < 8; ++i) {
                 if (doc["list"][i]) {
-                    float max_t = doc["list"][i]["main"]["temp_max"].as<float>();
-                    float min_t = doc["list"][i]["main"]["temp_min"].as<float>();
-                    if (max_t > today_temp_max) today_temp_max = max_t;
-                    if (min_t < today_temp_min) today_temp_min = min_t;
+                    float t = doc["list"][i]["main"]["temp"].as<float>();
+                    if (t > today_temp_max) today_temp_max = t;
+                    if (t < today_temp_min) today_temp_min = t;
                 }
             }
 
@@ -519,10 +518,9 @@ void updateWeather(bool saveHistory) {
             float tomorrow_temp_min = 100.0f;
             for (int i = 8; i < 16; ++i) {
                 if (doc["list"][i]) {
-                    float max_t = doc["list"][i]["main"]["temp_max"].as<float>();
-                    float min_t = doc["list"][i]["main"]["temp_min"].as<float>();
-                    if (max_t > tomorrow_temp_max) tomorrow_temp_max = max_t;
-                    if (min_t < tomorrow_temp_min) tomorrow_temp_min = min_t;
+                    float t = doc["list"][i]["main"]["temp"].as<float>();
+                    if (t > tomorrow_temp_max) tomorrow_temp_max = t;
+                    if (t < tomorrow_temp_min) tomorrow_temp_min = t;
                 }
             }
 
@@ -562,11 +560,11 @@ void updateWeather(bool saveHistory) {
                 lgfx_left_bus1.println(today_weather_desc);
                 char temp_str_today[30];
                 int h1 = lgfx_left_bus1.fontHeight() + margin;
-                sprintf(temp_str_today, "Max:%.0f°C", today_temp_max);
+                sprintf(temp_str_today, "Max:%.1f°C", today_temp_max);
                 lgfx_left_bus1.setFont(&fonts::efontJA_24);
                 lgfx_left_bus1.setCursor(0, h1);
                 lgfx_left_bus1.println(temp_str_today);
-                sprintf(temp_str_today, "Min:%.0f°C", today_temp_min);
+                sprintf(temp_str_today, "Min:%.1f°C", today_temp_min);
                 int h2 = lgfx_left_bus1.fontHeight() + margin;
                 lgfx_left_bus1.setCursor(0, h1 + h2);
                 lgfx_left_bus1.println(temp_str_today);
@@ -579,10 +577,10 @@ void updateWeather(bool saveHistory) {
                 lgfx_right_bus1.println(tomorrow_weather_desc);
                 char temp_str_tomorrow[30];
                 lgfx_right_bus1.setFont(&fonts::efontJA_24);
-                sprintf(temp_str_tomorrow, "Max:%.0f°C", tomorrow_temp_max);
+                sprintf(temp_str_tomorrow, "Max:%.1f°C", tomorrow_temp_max);
                 lgfx_right_bus1.setCursor(0, h1);
                 lgfx_right_bus1.println(temp_str_tomorrow);
-                sprintf(temp_str_tomorrow, "Min:%.0f°C", tomorrow_temp_min);
+                sprintf(temp_str_tomorrow, "Min:%.1f°C", tomorrow_temp_min);
                 lgfx_right_bus1.setCursor(0, h1 + h2);
                 lgfx_right_bus1.println(temp_str_tomorrow);
                 
@@ -919,7 +917,7 @@ void setup() {
   timeClient.update();
   Serial.println("NTP client initialized and time updated.");
 
-  updateWeather(true);
+  updateWeather(false);
   displayDateOfWeek(); 
   
   randomSeed(analogRead(0)); // 乱数シードを初期化
@@ -932,7 +930,7 @@ void setup() {
 void loop() {
   // --- ループ全体で共有するstatic変数 ---
   static unsigned long lastDisplayUpdate = 0;
-  static unsigned long lastWeatherUpdate = 0;
+  static int lastWeatherUpdateMinute = -1;
   static int last_day = -1;
   static int last_minute = -1;
   static int last_moon_age = -1;
@@ -1046,6 +1044,12 @@ void loop() {
       time_t epochTime = timeClient.getEpochTime();
       struct tm *ptm = localtime(&epochTime);
 
+      // --- 定期的な天気更新 (00分と30分) ---
+      if ((ptm->tm_min == 0 || ptm->tm_min == 30) && ptm->tm_min != lastWeatherUpdateMinute) {
+          lastWeatherUpdateMinute = ptm->tm_min;
+          updateWeather(true);
+      }
+
       // 月齢を計算 (四捨五入して整数にする)
       double currentMoonAge = calculateMoonAge(ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday);
       int currentMoonAgeInt = (int)(currentMoonAge + 0.5);
@@ -1158,9 +1162,5 @@ void loop() {
   // NTP時刻の更新
   timeClient.update();
 
-  // 天気予報の更新 (30分ごと)
-  if (millis() - lastWeatherUpdate > 1800000) {
-    lastWeatherUpdate = millis();
-    updateWeather(true); // 定期更新時は履歴を保存する
-  }
+  // 天気予報の更新は時刻ベース (00分/30分) に変更されました
 }
