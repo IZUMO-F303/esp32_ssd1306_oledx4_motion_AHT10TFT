@@ -460,49 +460,52 @@ void updateWeather(bool saveHistory) {
         Serial.println("WiFi not connected. Skipping weather update.");
         return;
     }
-    Serial.println("Updating weather...");
+
+    // --- 1. 履歴保存用の最新気温取得 (saveHistoryがtrueの場合のみ /weather APIを使用) ---
+    if (saveHistory) {
+        Serial.println("Fetching current weather for history...");
+        HTTPClient http;
+        String url = "http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
+        http.begin(url);
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            String payload = http.getString();
+            JsonDocument doc;
+            deserializeJson(doc, payload);
+            
+            float currentTemp = doc["main"]["temp"].as<float>();
+            String currentDesc = doc["weather"][0]["description"].as<String>();
+
+            strncpy(historyDesc[historyIndex], currentDesc.c_str(), 31);
+            historyDesc[historyIndex][31] = '\0';
+            historyTemp[historyIndex] = currentTemp;
+            historyIndex = (historyIndex + 1) % HISTORY_SIZE;
+            if (historyCount < HISTORY_SIZE) historyCount++;
+            
+            saveHistoryToNVS();
+            Serial.printf("History updated from /weather: %.1f°C (%s)\n", currentTemp, currentDesc.c_str());
+        }
+        http.end();
+    }
+
+    // --- 2. 予報データの取得 (/forecast APIを使用) ---
+    Serial.println("Updating forecast...");
     HTTPClient http;
     String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
     http.begin(url);
-    Serial.println("HTTP begin (without CA).");
 
     int httpCode = http.GET();
-    Serial.print("HTTP Code: ");
-    Serial.println(httpCode);
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, payload);
 
-    if (httpCode > 0) {
-        if (httpCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-            Serial.println("Payload received.");
-            
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, payload);
-
-            if (error) {
-                Serial.print(F("deserializeJson() failed: "));
-                Serial.println(error.c_str());
-                if (!isDisplayOff && !isBacklightOff) {
-                    // LovyanGFXでのエラー表示
-                    lgfx_left_bus1.clear();
-                    lgfx_left_bus1.setCursor(0, 0);
-                    lgfx_left_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-                    lgfx_left_bus1.println("Jsonパースエラー");
-                    lgfx_right_bus1.clear();
-                    lgfx_right_bus1.setCursor(0, 0);
-                    lgfx_right_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-                    lgfx_right_bus1.println("Jsonパースエラー");
-                }
-                http.end();
-                return;
-            }
-            
-            Serial.println("JSON parsed.");
-
+        if (!error) {
             // 天気概況の取得
             String today_weather_desc = doc["list"][0]["weather"][0]["description"].as<String>();
             String tomorrow_weather_desc = doc["list"][8]["weather"][0]["description"].as<String>();
 
-            // 今日の最高・最低気温（現時刻から24時間以内）の計算
+            // 今日の最高・最低気温の計算
             float today_temp_max = -100.0f;
             float today_temp_min = 100.0f;
             for (int i = 0; i < 8; ++i) {
@@ -513,7 +516,7 @@ void updateWeather(bool saveHistory) {
                 }
             }
 
-            // 明日の最高・最低気温（24時間後から48時間後まで）の計算
+            // 明日の最高・最低気温の計算
             float tomorrow_temp_max = -100.0f;
             float tomorrow_temp_min = 100.0f;
             for (int i = 8; i < 16; ++i) {
@@ -524,102 +527,51 @@ void updateWeather(bool saveHistory) {
                 }
             }
 
-            // --- 予報気温をグラフ用に保存 (48時間分 = 16データ) ---
+            // 予報気温をグラフ用に保存
             for (int i = 0; i < 16; i++) {
                 if (doc["list"][i]) {
                     forecastTemp[i] = doc["list"][i]["main"]["temp"].as<float>();
                 }
             }
-            
-            Serial.println("Weather data extracted.");
-            Serial.print("Today: "); Serial.print(today_weather_desc); Serial.print(" Max:"); Serial.print(today_temp_max); Serial.print(" Min:"); Serial.println(today_temp_min);
-            Serial.print("Tomorrow: "); Serial.print(tomorrow_weather_desc); Serial.print(" Max:"); Serial.print(tomorrow_temp_max); Serial.print(" Min:"); Serial.println(tomorrow_temp_min);
 
-            // --- 履歴の保存 (引数がtrueの場合のみ) ---
-            if (saveHistory) {
-                strncpy(historyDesc[historyIndex], today_weather_desc.c_str(), 31);
-                historyDesc[historyIndex][31] = '\0';
-                historyTemp[historyIndex] = doc["list"][0]["main"]["temp"].as<float>();
-                historyIndex = (historyIndex + 1) % HISTORY_SIZE;
-                if (historyCount < HISTORY_SIZE) historyCount++;
-                Serial.println("History saved to RAM.");
-                saveHistoryToNVS(); // NVSに永続化
-            }
-
-            // --- ここから描画処理 (画面オンかつグラフ表示中でない時のみ) ---
+            // 描画処理 (画面オン時)
             if (!isDisplayOff && !isBacklightOff && !isShowingCharts) {
-                // 2枚目のOLEDに履歴を表示
                 displayHistory();
 
-                // 3枚目のOLED (lgfx_left_bus1) に今日の天気を表示
-                int margin = -2; // 行間のマージン調整
+                // 今日の天気表示 (OLED 3)
+                int margin = -2;
                 lgfx_left_bus1.clear();
                 lgfx_left_bus1.setCursor(0, 0);
                 lgfx_left_bus1.setFont(&fonts::lgfxJapanGothicP_20);
                 lgfx_left_bus1.print("今日:");
                 lgfx_left_bus1.println(today_weather_desc);
-                char temp_str_today[30];
+                char temp_str[30];
                 int h1 = lgfx_left_bus1.fontHeight() + margin;
-                sprintf(temp_str_today, "Max:%.1f°C", today_temp_max);
                 lgfx_left_bus1.setFont(&fonts::efontJA_24);
+                sprintf(temp_str, "Max:%.1f°C", today_temp_max);
                 lgfx_left_bus1.setCursor(0, h1);
-                lgfx_left_bus1.println(temp_str_today);
-                sprintf(temp_str_today, "Min:%.1f°C", today_temp_min);
-                int h2 = lgfx_left_bus1.fontHeight() + margin;
-                lgfx_left_bus1.setCursor(0, h1 + h2);
-                lgfx_left_bus1.println(temp_str_today);
+                lgfx_left_bus1.println(temp_str);
+                sprintf(temp_str, "Min:%.1f°C", today_temp_min);
+                lgfx_left_bus1.setCursor(0, h1 + (lgfx_left_bus1.fontHeight() + margin));
+                lgfx_left_bus1.println(temp_str);
 
-                // 4枚目のOLED (lgfx_right_bus1) に明日の天気を表示
+                // 明日の天気表示 (OLED 4)
                 lgfx_right_bus1.clear();
                 lgfx_right_bus1.setCursor(0, 0);
                 lgfx_right_bus1.setFont(&fonts::lgfxJapanGothicP_20);
                 lgfx_right_bus1.print("明日:");
                 lgfx_right_bus1.println(tomorrow_weather_desc);
-                char temp_str_tomorrow[30];
                 lgfx_right_bus1.setFont(&fonts::efontJA_24);
-                sprintf(temp_str_tomorrow, "Max:%.1f°C", tomorrow_temp_max);
+                sprintf(temp_str, "Max:%.1f°C", tomorrow_temp_max);
                 lgfx_right_bus1.setCursor(0, h1);
-                lgfx_right_bus1.println(temp_str_tomorrow);
-                sprintf(temp_str_tomorrow, "Min:%.1f°C", tomorrow_temp_min);
-                lgfx_right_bus1.setCursor(0, h1 + h2);
-                lgfx_right_bus1.println(temp_str_tomorrow);
-                
-                Serial.println("OLEDs updated.");
+                lgfx_right_bus1.println(temp_str);
+                sprintf(temp_str, "Min:%.1f°C", tomorrow_temp_min);
+                lgfx_right_bus1.setCursor(0, h1 + (lgfx_right_bus1.fontHeight() + margin));
+                lgfx_right_bus1.println(temp_str);
             }
-        } else {
-            if (!isDisplayOff && !isBacklightOff) {
-                // LovyanGFXでのエラー表示
-                lgfx_left_bus1.clear();
-                lgfx_left_bus1.setCursor(0, 0);
-                lgfx_left_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-                char http_err_str[20];
-                sprintf(http_err_str, "HTTPエラー: %d", httpCode);
-                lgfx_left_bus1.println(http_err_str);
-                lgfx_right_bus1.clear();
-                lgfx_right_bus1.setCursor(0, 0);
-                lgfx_right_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-                lgfx_right_bus1.println(http_err_str);
-            }
-        }
-    } else {
-        Serial.print("HTTP GET failed, error: ");
-        Serial.println(http.errorToString(httpCode).c_str());
-
-        if (!isDisplayOff && !isBacklightOff) {
-            // LovyanGFXでのエラー表示
-            lgfx_left_bus1.clear();
-            lgfx_left_bus1.setCursor(0, 0);
-            lgfx_left_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-            lgfx_left_bus1.println("HTTP GET失敗");
-            lgfx_right_bus1.clear();
-            lgfx_right_bus1.setCursor(0, 0);
-            lgfx_right_bus1.setFont(&fonts::lgfxJapanMinchoP_16);
-            lgfx_right_bus1.println("HTTP GET失敗");
         }
     }
-
     http.end();
-    Serial.println("updateWeather() finished.");
 }
 
 // スターフィールドの星を初期化
@@ -1161,6 +1113,12 @@ void loop() {
   
   // NTP時刻の更新
   timeClient.update();
+  time_t now = timeClient.getEpochTime();
+  struct tm *ptm_now = localtime(&now);
 
-  // 天気予報の更新は時刻ベース (00分/30分) に変更されました
+  // 定期的な天気更新 (00分と30分)
+  if ((ptm_now->tm_min == 0 || ptm_now->tm_min == 30) && ptm_now->tm_min != lastWeatherUpdateMinute) {
+      lastWeatherUpdateMinute = ptm_now->tm_min;
+      updateWeather(true);
+  }
 }
