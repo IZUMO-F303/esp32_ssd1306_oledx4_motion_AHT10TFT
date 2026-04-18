@@ -936,18 +936,12 @@ void loop() {
       lgfx_tft.fillScreen(TFT_BLACK);
       lgfx_tft.drawFastHLine(0, 110, 240, TFT_WHITE);
       
-      if (touchDetected) {
-        // タッチでの復帰時はグラフを表示
-        isShowingCharts = true;
-        chartStartTime = millis();
-        updateWeather(false);
-        drawAllCharts();
-      } else {
-        // 人感センサでの復帰時は通常表示
-        isShowingCharts = false;
-        updateWeather(false);
-        displayHistory(); 
-      }
+      // 復帰時はどちらのセンサ（タッチ・人感）でも20秒間のグラフ表示を開始
+      isShowingCharts = true;
+      chartStartTime = millis();
+      updateWeather(false);
+      drawAllCharts();
+
       displayDateOfWeek(); // OLED 1は通常通り日付を表示
       
       // 時刻表示を強制的に再描画させる
@@ -967,7 +961,7 @@ void loop() {
           chartStartTime = millis();
         }
       }
-      // 人感センサのみの場合は、lastInteractionTimeの更新（上記）のみで通常表示を維持
+      // 人感センサのみの場合は、lastInteractionTimeの更新のみで通常表示を維持
     }
   }
 
