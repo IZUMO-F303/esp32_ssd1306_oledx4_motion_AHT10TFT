@@ -891,23 +891,19 @@ void loop() {
 
   // --- タッチ入力の検出と人感センサのチェック ---
   int touchValue = touchRead(touchPin);
-  bool interactionDetected = false;
-
-  // タッチ検出
-  if (touchValue < touchThreshold) {
-    interactionDetected = true;
-  }
+  bool touchDetected = (touchValue < touchThreshold);
+  bool motionDetected = false;
 
   // 人感センサ検出 (1秒おき)
   if (millis() - lastMotionCheckTime > 1000) {
     lastMotionCheckTime = millis();
     if (digitalRead(motionPin) == HIGH) {
-      interactionDetected = true;
+      motionDetected = true;
       Serial.println("Motion detected!");
     }
   }
 
-  if (interactionDetected) {
+  if (touchDetected || motionDetected) {
     lastInteractionTime = millis(); // 最後の操作時刻を更新
 
     if (isDisplayOff || isBacklightOff) {
@@ -940,17 +936,38 @@ void loop() {
       lgfx_tft.fillScreen(TFT_BLACK);
       lgfx_tft.drawFastHLine(0, 110, 240, TFT_WHITE);
       
-      // グラフ表示モードを開始
-      isShowingCharts = true;
-      chartStartTime = millis();
-      updateWeather(false); // 最新予報を取得してグラフ用にデータを保存
-      drawAllCharts();
+      if (touchDetected) {
+        // タッチでの復帰時はグラフを表示
+        isShowingCharts = true;
+        chartStartTime = millis();
+        updateWeather(false);
+        drawAllCharts();
+      } else {
+        // 人感センサでの復帰時は通常表示
+        isShowingCharts = false;
+        updateWeather(false);
+        displayHistory(); 
+      }
       displayDateOfWeek(); // OLED 1は通常通り日付を表示
       
       // 時刻表示を強制的に再描画させる
       last_minute = -1;
       
       return; // 復帰処理を完了
+    } else {
+      // すでに画面がついている場合、タッチであればグラフを表示（またはタイマー延長）
+      if (touchDetected) {
+        if (!isShowingCharts) {
+          Serial.println("Triggering charts from touch.");
+          isShowingCharts = true;
+          chartStartTime = millis();
+          updateWeather(false);
+          drawAllCharts();
+        } else {
+          chartStartTime = millis();
+        }
+      }
+      // 人感センサのみの場合は、lastInteractionTimeの更新（上記）のみで通常表示を維持
     }
   }
 
