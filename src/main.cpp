@@ -289,6 +289,7 @@ int historyIndex = 0; // 次に書き込む位置
 
 // --- 予報データ保持 ---
 float forecastTemp[16]; // 3時間おき、16個で48時間分
+float currentOutdoorTemp = 0.0f;
 bool isShowingCharts = false;
 unsigned long chartStartTime = 0;
 
@@ -394,6 +395,13 @@ void loadHistoryFromNVS() {
         preferences.getBytes("hTemp", historyTemp, sizeof(historyTemp));
         historyIndex = preferences.getInt("hIdx", 0);
         historyCount = preferences.getInt("hCnt", 0);
+        
+        // 最新の気温を履歴から復元
+        if (historyCount > 0) {
+            int lastIdx = (historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE;
+            currentOutdoorTemp = historyTemp[lastIdx];
+        }
+        
         Serial.println("History loaded from NVS.");
     } else {
         Serial.println("No history found in NVS.");
@@ -461,40 +469,40 @@ void updateWeather(bool saveHistory) {
         return;
     }
 
-    // --- 1. 履歴保存用の最新気温取得 (saveHistoryがtrueの場合のみ /weather APIを使用) ---
-    if (saveHistory) {
-        Serial.println("Fetching current weather for history...");
-        HTTPClient http;
-        String url = "http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
-        http.begin(url);
-        int httpCode = http.GET();
-        if (httpCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-            JsonDocument doc;
-            deserializeJson(doc, payload);
-            
-            float currentTemp = doc["main"]["temp"].as<float>();
-            String currentDesc = doc["weather"][0]["description"].as<String>();
+    // --- 1. 最新気温取得 (/weather APIを使用) ---
+    Serial.println("Fetching current weather...");
+    HTTPClient http;
+    String url = "http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
+    http.begin(url);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        JsonDocument doc;
+        deserializeJson(doc, payload);
+        
+        currentOutdoorTemp = doc["main"]["temp"].as<float>();
+        String currentDesc = doc["weather"][0]["description"].as<String>();
 
+        // 履歴保存フラグが立っている場合のみNVSへ保存
+        if (saveHistory) {
             strncpy(historyDesc[historyIndex], currentDesc.c_str(), 31);
             historyDesc[historyIndex][31] = '\0';
-            historyTemp[historyIndex] = currentTemp;
+            historyTemp[historyIndex] = currentOutdoorTemp;
             historyIndex = (historyIndex + 1) % HISTORY_SIZE;
             if (historyCount < HISTORY_SIZE) historyCount++;
             
             saveHistoryToNVS();
-            Serial.printf("History updated from /weather: %.1f°C (%s)\n", currentTemp, currentDesc.c_str());
+            Serial.printf("History updated from /weather: %.1f°C (%s)\n", currentOutdoorTemp, currentDesc.c_str());
         }
-        http.end();
     }
+    http.end();
 
     // --- 2. 予報データの取得 (/forecast APIを使用) ---
     Serial.println("Updating forecast...");
-    HTTPClient http;
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
+    url = "http://api.openweathermap.org/data/2.5/forecast?q=" + String(city) + "&appid=" + String(apiKey) + "&units=metric&lang=ja";
     http.begin(url);
 
-    int httpCode = http.GET();
+    httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         JsonDocument doc;
@@ -1057,7 +1065,7 @@ void loop() {
           lgfx_tft.fillRect(0, 120, 240, 40, TFT_BLACK); 
           lgfx_tft.setTextColor(TFT_ORANGE);
           lgfx_tft.setCursor(10, 120);
-          lgfx_tft.printf("%.1f C", temp.temperature);
+          lgfx_tft.printf("%.1f/%.1f C", temp.temperature, currentOutdoorTemp);
 
           lgfx_tft.fillRect(0, 160, 240, 40, TFT_BLACK);
           lgfx_tft.setTextColor(TFT_CYAN); // 湿度は水色に変更
